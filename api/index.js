@@ -3,7 +3,7 @@ const E = process.env;
 const r = new Redis({ url: E.UPSTASH_REDIS_REST_URL || E.KV_REST_API_URL, token: E.UPSTASH_REDIS_REST_TOKEN || E.KV_REST_API_TOKEN });
 const sleep = ms => new Promise(o => setTimeout(o, ms));
 const HALLS = { h1: 'Neon Monsoon', h2: 'The Last Compiler', h3: 'Midnight Kernel' };
-const HOLD = 30000, CAP = 2, VIPB = 20, AGE = 1, QUANTUM = 2000, GONE = 12000;
+const HOLD = 30000, CAP = 3, VIPB = 20, AGE = 1, QUANTUM = 2000, GONE = 12000;
 
 const fresh = () => ({ v: 0, n: 0, act: { h1: [], h2: [], h3: [] }, q: { h1: [], h2: [], h3: [] }, booked: {}, holds: {}, vip: {},
   pay: { q: [], run: null, t: 0, sl: 0, g: [], d: [] }, algo: 'prio', unsafe: false, log: [], w: null });
@@ -21,11 +21,17 @@ async function lock() {
 const unlock = async tok => { if ((await r.get('LOCK')) === tok) await r.del('LOCK'); };
 
 // writer: exclusive. With locks OFF the read-modify-write races (on purpose, to show double booking)
-async function writer(fn) {
-  let s = (await r.get('S')) || fresh(), tok = null;
+async function writer(fn, s0) {
+  let s = s0, tok = null;
   if (!s.unsafe) { tok = await lock(); s = (await r.get('S')) || fresh(); }
-  try { const out = await fn(s); if (s.unsafe) await sleep(700); await r.set('S', s); return out; }
-  finally { if (tok) await unlock(tok); }
+  try {
+    const out = await fn(s);
+    if (s.unsafe) await sleep(700);
+    const p = r.pipeline().set('S', s);   // save and release the lock in one round trip
+    if (tok) p.del('LOCK');
+    await p.exec(); tok = null;
+    return out;
+  } finally { if (tok) await unlock(tok); }
 }
 
 function clean(s, now, seen) {
@@ -111,23 +117,24 @@ function view(s, u, now, readers) {
   const P = s.pay, av = k => P.d.length ? (P.d.reduce((x, y) => x + y[k], 0) / P.d.length / 1000).toFixed(1) : '-';
   const ord = [...P.q].sort((a, z) => (z.id === P.run) - (a.id === P.run) || (s.algo === 'prio' ? (!!s.vip[z.u] - !!s.vip[a.u] || a.at - z.at) : s.algo === 'sjf' ? a.left - z.left : 0));
   const q = {}; for (const h in HALLS) q[h] = [...s.q[h]].sort((a, z) => pri(s, z, now) - pri(s, a, now)).map(x => ({ u: x.u, vip: !!s.vip[x.u], p: +pri(s, x, now).toFixed(1) }));
-  return { now, halls: HALLS, act: s.act, q, booked: s.booked, holds: s.holds, algo: s.algo, unsafe: s.unsafe, log: s.log, w: s.w, readers, vip: !!s.vip[u],
+  return { now, cap: CAP, halls: HALLS, act: s.act, q, booked: s.booked, holds: s.holds, algo: s.algo, unsafe: s.unsafe, log: s.log, w: s.w, readers, vip: !!s.vip[u],
     pay: { ord: ord.map(j => ({ id: j.id, u: j.u, vip: !!s.vip[j.u], left: j.left, burst: j.burst, n: j.seats.length })), run: P.run, g: P.g, aw: av('w'), at: av('ta') } };
 }
 
 module.exports = async (req, res) => {
   try {
     const b = req.body || {}, u = String(b.u || 'anon').slice(0, 12), a = b.a, now = Date.now();
-    let s = (await r.get('S')) || fresh();
-    // readers register presence (no lock needed)
-    const z = (await r.pipeline().zadd('seen', { score: now, member: u }).zremrangebyscore('seen', 0, now - 60000).zrange('seen', 0, -1, { withScores: true }).exec())[2];
+    // one round trip: read state + register presence + fetch who is online
+    const [s0, , , z] = await r.pipeline().get('S')
+      .zadd('seen', { score: now, member: u }).zremrangebyscore('seen', 0, now - 60000).zrange('seen', 0, -1, { withScores: true }).exec();
+    const s = s0 || fresh();
     const seen = {}; for (let i = 0; i < z.length; i += 2) seen[z[i]] = +z[i + 1];
     const readers = Object.values(seen).filter(t => now - t < 5000).length;
-    if (a === 'state') { // reader path: shared access, only escalates to the writer path if something structural changed
+    if (a === 'state') { // reader path: no lock, only escalates to the writer if something structural changed
       const v0 = s.v; clean(s, now, seen); tick(s, now);
       if (s.v === v0) return res.json(view(s, u, now, readers));
     }
-    const o = await writer(async w => { clean(w, now, seen); tick(w, now); const err = act(w, a, u, b, now); return { err, v: view(w, u, now, readers) }; });
+    const o = await writer(async w => { clean(w, now, seen); tick(w, now); const err = act(w, a, u, b, now); return { err, v: view(w, u, now, readers) }; }, s);
     res.json({ ...o.v, err: o.err });
   } catch (e) { res.status(500).json({ err: String(e.message || e) }); }
 };

@@ -25,9 +25,19 @@ let S=null,T=0;
 const now=()=>Date.now()-T;
 const col=u=>`hsl(${[...u].reduce((a,c)=>a*31+c.charCodeAt(0),7)%360} 70% 65%)`;
 function toast(m){const t=document.createElement('div');t.textContent=m;t.style.cssText='position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#ff6b81;color:#230;padding:10px 16px;border-radius:12px;font-weight:800;z-index:9';document.body.append(t);setTimeout(()=>t.remove(),2200)}
+let seq=0,applied=0,last='';
 async function api(a,x={}){
-  try{const r=await fetch('/api',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({a,u:U,...x})});
-    S=await r.json();if(S.now)T=Date.now()-S.now;if(S.err)toast(S.err);draw()}catch(e){toast('Connection lost, retrying')}
+  const my=++seq;
+  try{
+    const r=await fetch('/api',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({a,u:U,...x})});
+    const d=await r.json();
+    if(a==='state'&&my<applied)return;      // a newer answer already arrived, drop this stale poll
+    applied=Math.max(applied,my);
+    if(d.now)T=Date.now()-d.now;
+    if(d.err)toast(d.err);
+    S=d;const k=JSON.stringify({...d,now:0,err:0});
+    if(k!==last||d.err){last=k;draw()}      // only repaint when something changed
+  }catch(e){toast('Connection lost, retrying')}
 }
 function draw(){
   if(!S||!S.halls)return;
@@ -40,19 +50,19 @@ function draw(){
     h+=`<div class=c><b>${P.run===j.id?'Processing your payment':'Waiting in the payment queue'}</b><div class=m>Position ${ji+1} in payment queue · ${j.n} seat(s) · ${S.algo.toUpperCase()} scheduling</div>
     <div class=bar><i style="width:${100-100*j.left/j.burst}%"></i></div><div class=m>${(j.left/1000).toFixed(1)}s of CPU time left${j.vip?' · VIP':''}</div></div>`;
   }else if(qH){const i=S.q[qH].findIndex(x=>x.u===U),x=S.q[qH][i];
-    h+=`<div class=c><b>${H[qH]} is full (2 of 2)</b><div class=m>Queue position <b style="color:var(--acc)">${i+1}</b> of ${S.q[qH].length} · priority ${x.p} (${x.vip?'VIP +20, ':''}aging +1 per second)</div><p><button class=g onclick="api('leave')">Leave queue</button></p></div>`;
+    h+=`<div class=c><b>${H[qH]} is full (${S.cap} of ${S.cap})</b><div class=m>Queue position <b style="color:var(--acc)">${i+1}</b> of ${S.q[qH].length} · priority ${x.p} (${x.vip?'VIP +20, ':''}aging +1 per second)</div><p><button class=g onclick="api('leave')">Leave queue</button></p></div>`;
   }else if(inH){const held=Object.entries(S.holds).filter(([k,v])=>v.u===U&&!v.p);
     h+=`<div class=c><div class=row><b>${H[inH]}</b><button class=g onclick="api('leave')">Leave hall</button></div><div class=m>Screen is this side</div><div class=grid>`;
     for(const r of 'ABCDE')for(let c=1;c<=6;c++){const k=`${inH}-${r}${c}`,o=S.holds[k],cl=S.booked[k]?'b':o?(o.u===U?'me':'o'):'';h+=`<button class="s ${cl}" onclick="api('hold',{k:'${k}'})" aria-label="Seat ${r}${c}">${r}${c}</button>`}
     h+=`</div>`+(held.length?`<div class=row><span>${held.map(x=>x[0].split('-')[1]).join(', ')} · Rs ${held.length*200} · released in <b data-e="${Math.min(...held.map(x=>x[1].e))}"></b></span><button onclick="api('pay')">Pay now</button></div>`:`<div class=m>Tap a seat to hold it for 30 seconds</div>`)+`</div>`;
-  }else for(const k of hs)h+=`<div class="c row"><div><b>${H[k]}</b><div class=m>${S.act[k].length} of 2 inside · ${S.q[k].length} waiting</div></div><button onclick="api('enter',{h:'${k}'})">Enter hall</button></div>`;
+  }else for(const k of hs)h+=`<div class="c row"><div><b>${H[k]}</b><div class=m>${S.act[k].length} of ${S.cap} inside · ${S.q[k].length} waiting</div></div><button onclick="api('enter',{h:'${k}'})">Enter hall</button></div>`;
   h+=`<div class=c><b>OS console</b><div class=m>CPU scheduler for payments</div><div class=row style="margin:6px 0">${['fcfs','sjf','rr','prio'].map(a=>`<button class="${S.algo===a?'':'g'}" onclick="api('algo',{x:'${a}'})">${a.toUpperCase()}</button>`).join('')}</div>
   <div class=gt>${P.g.map(g=>`<i style="flex:${g.e-g.s};background:${col(g.u)}">${g.u}</i>`).join('')||'<span class=m>CPU idle</span>'}</div>
   <div class=m>Avg wait ${P.aw}s · avg turnaround ${P.at}s · RR quantum 2s · PRIO is preemptive (VIP wins)</div>
-  <div class=m style="margin:8px 0">Semaphores free: ${hs.map(k=>`${H[k]} ${2-S.act[k].length}`).join(' · ')} · seat locks held: ${Object.keys(S.holds).length}</div>
+  <div class=m style="margin:8px 0">Semaphores free: ${hs.map(k=>`${H[k]} ${S.cap-S.act[k].length}`).join(' · ')} · seat locks held: ${Object.keys(S.holds).length}</div>
   <div class=row><button class="${S.unsafe?'g':'on'}" onclick="api('unsafe',{on:${!S.unsafe}})">Locks ${S.unsafe?'OFF (race)':'ON'}</button><button class=g onclick="confirm('Reset everything?')&&api('reset')">Reset</button></div><pre>${S.log.join('\n')}</pre></div>`;
   $('#app').innerHTML=h;tickE();
 }
 function tickE(){document.querySelectorAll('[data-e]').forEach(e=>e.textContent=Math.max(0,Math.ceil((e.dataset.e-now())/1000))+'s')}
-setInterval(tickE,300);setInterval(()=>api('state'),1500);api('state');
+setInterval(tickE,300);(async function loop(){await api('state');setTimeout(loop,1500)})();
 </script></body></html>
