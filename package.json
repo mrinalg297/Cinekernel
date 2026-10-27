@@ -1,0 +1,1 @@
+{"name":"cinekernel","version":"1.0.0","dependencies":{"@upstash/redis":"^1.34.0"}}

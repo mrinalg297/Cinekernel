@@ -1,0 +1,58 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CineKernel</title>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0f2236;--card:#173250;--ink:#eef4fa;--mut:#8fa8c2;--acc:#ffc83d;--ok:#4fd1a5;--me:#5ac8fa;--seat:#2b4d73}
+*{box-sizing:border-box}body{margin:0 auto;max-width:560px;padding:14px;background:var(--bg);color:var(--ink);font:15px/1.4 'Bricolage Grotesque',system-ui,sans-serif}
+h1{font-size:24px;margin:0;letter-spacing:-.5px}h1 b{color:var(--acc)}
+.c{background:var(--card);border-radius:18px 18px 18px 6px;padding:14px;margin:12px 0}
+.row{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+button{font:inherit;font-weight:800;border:0;border-radius:10px;padding:9px 14px;background:var(--acc);color:#1c1500;cursor:pointer}
+button:focus-visible{outline:2px solid var(--me);outline-offset:2px}
+button.g{background:#24456a;color:var(--ink)}button.on{background:var(--ok);color:#022}
+.m{color:var(--mut);font-size:13px}
+.grid{display:grid;grid-template-columns:repeat(6,1fr);gap:7px;margin:12px 0}
+.s{aspect-ratio:1;border-radius:9px 9px 3px 3px;background:var(--seat);color:var(--mut);font-size:11px;padding:0}
+.s.b{background:#1b2d44;color:#4d6683;cursor:not-allowed}.s.o{background:#7a5a12;color:#ffe29a}.s.me{background:var(--me);color:#012}
+.bar{height:8px;background:#24456a;border-radius:9px;overflow:hidden;margin:10px 0}.bar i{display:block;height:100%;background:var(--ok);transition:width .4s}
+.gt{display:flex;height:26px;gap:1px;margin:6px 0}.gt i{font:800 10px/26px sans-serif;text-align:center;overflow:hidden;color:#000;border-radius:3px}
+pre{white-space:pre-wrap;font-size:11px;color:var(--mut);margin:10px 0 0;max-height:160px;overflow:auto}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style></head><body><div id="app"></div>
+<script>
+const $=s=>document.querySelector(s);
+const U=localStorage.u||(localStorage.u='P'+Math.floor(1000+Math.random()*9000));
+let S=null,T=0;
+const now=()=>Date.now()-T;
+const col=u=>`hsl(${[...u].reduce((a,c)=>a*31+c.charCodeAt(0),7)%360} 70% 65%)`;
+function toast(m){const t=document.createElement('div');t.textContent=m;t.style.cssText='position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#ff6b81;color:#230;padding:10px 16px;border-radius:12px;font-weight:800;z-index:9';document.body.append(t);setTimeout(()=>t.remove(),2200)}
+async function api(a,x={}){
+  try{const r=await fetch('/api',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({a,u:U,...x})});
+    S=await r.json();if(S.now)T=Date.now()-S.now;if(S.err)toast(S.err);draw()}catch(e){toast('Connection lost, retrying')}
+}
+function draw(){
+  if(!S||!S.halls)return;
+  const P=S.pay,H=S.halls,hs=Object.keys(H);
+  const inH=hs.find(h=>S.act[h].includes(U)),qH=hs.find(h=>S.q[h].some(x=>x.u===U)),ji=P.ord.findIndex(j=>j.u===U),mine=Object.keys(S.booked).filter(k=>S.booked[k]===U);
+  let h=`<div class=row><div><h1>Cine<b>Kernel</b></h1><div class=m>You are ${U} · ${S.readers} viewing${S.w&&S.w.e>now()?` · ${S.w.u} is writing`:''}</div></div>
+  <button class="${S.vip?'on':'g'}" onclick="api('vip',{on:${!S.vip}})">${S.vip?'VIP on':'Become VIP'}</button></div>`;
+  if(mine.length)h+=`<div class=c><b>Your tickets</b><div class=m>${mine.map(k=>k.split('-').reverse().join(' / ')).join(' · ')}</div></div>`;
+  if(ji>=0){const j=P.ord[ji];
+    h+=`<div class=c><b>${P.run===j.id?'Processing your payment':'Waiting in the payment queue'}</b><div class=m>Position ${ji+1} in payment queue · ${j.n} seat(s) · ${S.algo.toUpperCase()} scheduling</div>
+    <div class=bar><i style="width:${100-100*j.left/j.burst}%"></i></div><div class=m>${(j.left/1000).toFixed(1)}s of CPU time left${j.vip?' · VIP':''}</div></div>`;
+  }else if(qH){const i=S.q[qH].findIndex(x=>x.u===U),x=S.q[qH][i];
+    h+=`<div class=c><b>${H[qH]} is full (2 of 2)</b><div class=m>Queue position <b style="color:var(--acc)">${i+1}</b> of ${S.q[qH].length} · priority ${x.p} (${x.vip?'VIP +20, ':''}aging +1 per second)</div><p><button class=g onclick="api('leave')">Leave queue</button></p></div>`;
+  }else if(inH){const held=Object.entries(S.holds).filter(([k,v])=>v.u===U&&!v.p);
+    h+=`<div class=c><div class=row><b>${H[inH]}</b><button class=g onclick="api('leave')">Leave hall</button></div><div class=m>Screen is this side</div><div class=grid>`;
+    for(const r of 'ABCDE')for(let c=1;c<=6;c++){const k=`${inH}-${r}${c}`,o=S.holds[k],cl=S.booked[k]?'b':o?(o.u===U?'me':'o'):'';h+=`<button class="s ${cl}" onclick="api('hold',{k:'${k}'})" aria-label="Seat ${r}${c}">${r}${c}</button>`}
+    h+=`</div>`+(held.length?`<div class=row><span>${held.map(x=>x[0].split('-')[1]).join(', ')} · Rs ${held.length*200} · released in <b data-e="${Math.min(...held.map(x=>x[1].e))}"></b></span><button onclick="api('pay')">Pay now</button></div>`:`<div class=m>Tap a seat to hold it for 30 seconds</div>`)+`</div>`;
+  }else for(const k of hs)h+=`<div class="c row"><div><b>${H[k]}</b><div class=m>${S.act[k].length} of 2 inside · ${S.q[k].length} waiting</div></div><button onclick="api('enter',{h:'${k}'})">Enter hall</button></div>`;
+  h+=`<div class=c><b>OS console</b><div class=m>CPU scheduler for payments</div><div class=row style="margin:6px 0">${['fcfs','sjf','rr','prio'].map(a=>`<button class="${S.algo===a?'':'g'}" onclick="api('algo',{x:'${a}'})">${a.toUpperCase()}</button>`).join('')}</div>
+  <div class=gt>${P.g.map(g=>`<i style="flex:${g.e-g.s};background:${col(g.u)}">${g.u}</i>`).join('')||'<span class=m>CPU idle</span>'}</div>
+  <div class=m>Avg wait ${P.aw}s · avg turnaround ${P.at}s · RR quantum 2s · PRIO is preemptive (VIP wins)</div>
+  <div class=m style="margin:8px 0">Semaphores free: ${hs.map(k=>`${H[k]} ${2-S.act[k].length}`).join(' · ')} · seat locks held: ${Object.keys(S.holds).length}</div>
+  <div class=row><button class="${S.unsafe?'g':'on'}" onclick="api('unsafe',{on:${!S.unsafe}})">Locks ${S.unsafe?'OFF (race)':'ON'}</button><button class=g onclick="confirm('Reset everything?')&&api('reset')">Reset</button></div><pre>${S.log.join('\n')}</pre></div>`;
+  $('#app').innerHTML=h;tickE();
+}
+function tickE(){document.querySelectorAll('[data-e]').forEach(e=>e.textContent=Math.max(0,Math.ceil((e.dataset.e-now())/1000))+'s')}
+setInterval(tickE,300);setInterval(()=>api('state'),1500);api('state');
+</script></body></html>
